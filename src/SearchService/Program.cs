@@ -1,6 +1,9 @@
 using System.Net;
+using MassTransit;
 using Polly;
 using Polly.Extensions.Http;
+using SearchService;
+using SearchService.Consumers;
 using SearchService.Data;
 using SearchService.Services;
 
@@ -10,6 +13,30 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddHttpClient<AuctionSvcHttpClient>().AddPolicyHandler(GetPolicy());
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+builder.Services.AddMassTransit(x =>
+{
+    x.AddConsumersFromNamespaceContaining<AuctionCreatedConsumer>();
+    x.AddConsumersFromNamespaceContaining<AuctionUpdatedConsumer>();
+
+    x.SetEndpointNameFormatter(new KebabCaseEndpointNameFormatter("search", false));
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        // Ovo je konfiguracija ukoliko je mongo db bio ugasen, 
+        // a ima nesto da primi da onda pokusava svakih 
+        // 5 sekundi dok ne uspije
+        cfg.ReceiveEndpoint("search-auction-created", e => 
+        {
+            e.UseMessageRetry(r => r.Interval(5, 5));
+
+            e.ConfigureConsumer<AuctionCreatedConsumer>(context);
+        });
+        //////////////////////////
+
+        cfg.ConfigureEndpoints(context);
+    });
+});
 
 var app = builder.Build();
 
